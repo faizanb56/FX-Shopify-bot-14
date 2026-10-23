@@ -205,8 +205,8 @@ def build_entities_with_custom_emojis(text: str) -> Tuple[str, List[MessageEntit
     entities.sort(key=lambda e: e.offset)
     return final_text, entities
 
-BOT_TOKEN = '8257388327:AAEGBO9tQ3BVEzmkBOWZ91Md5gIvd4LR5wc'
-OWNER_ID = 7622071677
+BOT_TOKEN = '8774723543:AAFghaX02hsvGEt9JEuxqtcKOeTCzVVwRhM'
+OWNER_ID = 7678224193
 HIT_LOG_GROUP_ID = -1002553955578
 HIT_LOG_CONFIG_FILE = 'hitlog_config.json'
 
