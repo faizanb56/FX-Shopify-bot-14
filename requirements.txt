@@ -1,0 +1,10 @@
+python-telegram-bot>=22.7
+curl_cffi
+Telethon
+aiohttp
+aiofiles
+requests
+faker
+user_agent
+playwright
+httpx
